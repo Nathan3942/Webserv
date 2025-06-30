@@ -6,18 +6,24 @@
 /*   By: njeanbou <njeanbou@student.42.fr>          +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/06/20 11:18:38 by ichpakov          #+#    #+#             */
-/*   Updated: 2025/06/26 18:45:48 by njeanbou         ###   ########.fr       */
+/*   Updated: 2025/06/30 13:51:23 by njeanbou         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
 #include "../include/server.hpp"
 
-Server::Server(std::vector<int>& ports_) : ports(ports_)
+Server::Server(std::vector<int>& ports_) : ports(ports_), isRunning(false)
 {
+	epoll_fd = epoll_create1(0);
+	if (epoll_fd == -1)
+	{
+		perror("epoll_creat1");
+		exit(1);
+	}
+
 	for (size_t i = 0; i < ports.size(); ++i)
 	{
-		struct sockaddr_in serverAddr;
-		server_fd = socket(AF_INET, SOCK_STREAM, 0);
+		int server_fd = socket(AF_INET, SOCK_STREAM, 0);
 		if (server_fd < 0) {
 			perror("socket");
 			exit(1);
@@ -30,6 +36,9 @@ Server::Server(std::vector<int>& ports_) : ports(ports_)
 			return ;
 		}
 
+		set_nonblocking(server_fd);
+
+		struct sockaddr_in serverAddr;
 		memset(&serverAddr, 0, sizeof(serverAddr));
 		serverAddr.sin_family = AF_INET;
 		serverAddr.sin_addr.s_addr = INADDR_ANY;
@@ -45,6 +54,16 @@ Server::Server(std::vector<int>& ports_) : ports(ports_)
 			exit(1);
 		}
 
+		struct epoll_event ev;
+		ev.events = EPOLLIN;
+		ev.data.fd = server_fd;
+
+		if (epoll_ctl(epoll_fd, EPOLL_CTL_ADD, server_fd, &ev) == -1)
+		{
+			perror("epoll_ctl: listen socket");
+			exit(1);
+		}
+
 		sockets.push_back(server_fd);
         std::cout << "Listening on port " << ports[i] << std::endl;
 	}
@@ -52,185 +71,114 @@ Server::Server(std::vector<int>& ports_) : ports(ports_)
 
 Server::~Server()
 {
-	
+	close_socket();
+	if (epoll_fd > 0)
+		close(epoll_fd);
 }
+
+int	Server::set_nonblocking(int fd)
+{
+	int flags = fcntl(fd, F_GETFL, 0);
+	if (flags == -1)
+		return (-1);
+	return (fcntl(fd, F_SETFL, flags | O_NONBLOCK));
+}
+
+bool	Server::is_listen_socket(int fd) const
+{
+	for (size_t i = 0; i < sockets.size(); ++i)
+	{
+		if (sockets[i] == fd)
+			return (true);
+	}
+	return (false);
+}
+
+
+void	Server::accept_connection(int listen_fd)
+{
+	struct sockaddr_in client_addr;
+	socklen_t	client_len = sizeof(client_addr);
+	int client_fd = accept(listen_fd, (struct sockaddr*)&client_addr, &client_len);
+	if (client_fd < 0)
+	{
+		perror("accept");
+		return ;
+	}
+
+	set_nonblocking(client_fd);
+	
+	struct epoll_event	ev;
+	ev.events = EPOLLIN | EPOLLET;
+	ev.data.fd = client_fd;
+	if (epoll_ctl(epoll_fd, EPOLL_CTL_ADD, client_fd, &ev) == -1)
+	{
+		perror("epoll_ctl: client");
+		close(client_fd);
+	}
+}
+
+
+ssize_t Server::send_all(int sockfd, const char* buf, size_t len) {
+    size_t total_sent = 0;
+    while (total_sent < len) {
+        ssize_t sent = send(sockfd, buf + total_sent, len - total_sent, 0);
+        if (sent <= 0) {
+            if (sent == -1 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+                // Socket en mode non bloquant, on peut attendre un peu ou continuer la boucle
+                continue;
+            }
+            return -1; // Erreur fatale
+        }
+        total_sent += sent;
+    }
+    return total_sent;
+}
+
 
 void	Server::close_socket()
 {
 	for (size_t i = 0; i < sockets.size(); ++i)
 		close(sockets[i]);
+	sockets.clear();
 }
 
-// std::string	Server::get_path(const std::string& request)
-// {
-// 	std::string path = "/";
-
-// 	size_t pos1 = request.find("GET ");
-// 	size_t pos2 = request.find(" HTTP/");
-// 	if (pos1 != std::string::npos && pos2 != std::string::npos)
-// 		path = request.substr(pos1 + 4, pos2 - 4);
-// 	if (path == "/")
-// 		path = "/index.html";
-// 	return (path);
-// }
-
-// std::string Server::read_file_binary(const std::string& filepath)
-// {
-// 	std::ifstream file(filepath.c_str(), std::ios::in | std::ios::binary);
-// 	if (!file)
-// 		return ("404");
-	
-// 	std::string content;
-// 	char	buffer[1024];
-// 	while (file.read(buffer, sizeof(buffer)))
-// 		content.append(buffer, file.gcount());
-// 	if (file.gcount() > 0)
-// 		content.append(buffer, file.gcount());
-// 	return (content);
-// }
-
-// std::string Server::read_file(const std::string& filepath)
-// {
-//     std::ifstream file(filepath.c_str());
-//     if (!file)
-//         return ("404");
-//     std::string content;
-//     char c;
-//     while (file.get(c))
-//         content += c;
-//     return (content);
-// }
-
-// std::string Server::handle_client(int clientSocket)
-// {
-//     const int bufferSize = 1024;
-//     char buffer[bufferSize];
-//     memset(buffer, 0, bufferSize);
-
-//     int bytesRead = read(clientSocket, buffer, bufferSize - 1);
-//     if (bytesRead < 0) {
-//         perror("read");
-//         return ("");
-//     }
-
-//     printf("Requête reçue :\n%s\n", buffer);
-
-// 	std::string request(buffer);
-// 	return (request);
-// }
-
-// std::string	Server::read_and_path(const std::string path)
-// {
-// 	std::string full_path = std::string(WEBROOT) + path;
-		
-// 		if (full_path.find("png") == std::string::npos &&
-// 			full_path.find("jpeg") == std::string::npos &&
-// 			full_path.find("jpg") == std::string::npos)
-// 		   	return (read_file(full_path));
-// 		else
-// 			return (read_file_binary(full_path));
-// }
-
-// int	get_type(const std::string& path)
-// {
-// 	const char* type[] = {"html", "css", "xml", "png", "jpg", "jpeg"};
-// 	size_t	pos = path.find(".");
-// 	std::string afterDot = path.substr(pos + 1);
-
-// 	int i = 0;
-// 	while (type[i])
-// 	{
-// 		if (type[i] == afterDot)
-// 			return (static_cast<int>(i));
-// 		++i;
-// 	}
-// 	return (-1);
-// }
-
-
-// std::string Server::get_content_type(const std::string& path)
-// {
-// 	// std::cout << "PATH : " << path << "\nindex : " << get_type(path) << std::endl;
-// 	switch (get_type(path))
-// 	{
-// 		case 0:
-// 			return ("text/html");
-// 		case 1:
-// 			return ("text/css");
-// 		case 2:
-// 			return ("text/xml");
-// 		case 3:
-// 			return ("image/png");
-// 		case 4:
-// 			return ("image/jpeg");
-// 		case 5:
-// 			return ("image/jpeg");
-// 		default:
-// 			return ("text/html");
-// 	}
-// }
-
-// std::string	Server::build_reponse(const std::string& body, const std::string& content_type)
-// {
-// 	std::string reponse;
-// 	if (body.find("404") != std::string::npos)
-// 		reponse += "HTTP/1.1 404 \r\n";
-// 	else
-// 		reponse += "HTTP/1.1 200 \r\n";
-// 	reponse += "Content-Type: " + content_type + "\r\n";
-	
-// 	char lenght[32];
-// 	sprintf(lenght, "%lu", (unsigned long)body.size());
-// 	reponse += "Content-Length: " + std::string(lenght) + "\r\n";
-// 	reponse += "Connection: close\r\n\r\n";
-// 	reponse += body;
-// 	return (reponse);
-// }
 
 void Server::start()
 {
-	fd_set	readfds;
+	const int	max_events = 100;
+	struct epoll_event events[max_events];
 	
     isRunning = true;
     while (isRunning)
 	{
-		FD_ZERO(&readfds);
-		int max_fd = 0;
-
-		for (size_t i = 0; i < sockets.size(); ++i)
+		int	nfds = epoll_wait(epoll_fd, events, max_events, -1);
+		if (nfds == -1)
 		{
-			FD_SET(sockets[i], &readfds);
-			if (sockets[i] > max_fd)
-				max_fd = sockets[i];
+			perror("epoll_wait");
+			continue;
 		}
 
-		if (select(max_fd + 1, &readfds, NULL, NULL, NULL) < 0)
+		for (int i = 0; i < nfds; ++i)
 		{
-			perror("Select");
-			continue; 
-		}
+			int fd = events[i].data.fd;
 
-		for (size_t i = 0; i < sockets.size(); ++i)
-		{
-			if (FD_ISSET(sockets[i], &readfds))
+			if (is_listen_socket(fd))
+				accept_connection(fd);
+			else
 			{
-				int client_fd;
-				struct sockaddr_in clientAddr;
-				socklen_t clientLen = sizeof(clientAddr);
-
-				client_fd = accept(sockets[i], (struct sockaddr*)&clientAddr, &clientLen);
-				if (client_fd < 0) {
-					perror("accept");
-					continue;
-				}
-
-				Request req(client_fd);
+				Request req(fd);
 				Responce res(req.get_path());
-
-				send(client_fd, res.get_response().c_str(), res.get_response().size(), 0);
-				close(client_fd);
+				
+				const std::vector<char>& buffer = res.get_response();
+				if (send_all(fd, buffer.data(), buffer.size()) == -1)
+					perror("send_all");
+				// send(fd, buffer.data(), buffer.size(), 0);
+				
+				close(fd);
+				epoll_ctl(epoll_fd, EPOLL_CTL_DEL, fd, NULL);
 			}
-		}
-    }
-	Server::close_socket();
+		}	
+	}
 }
+

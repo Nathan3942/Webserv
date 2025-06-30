@@ -1,0 +1,180 @@
+Fonctionnalités déjà présentes (à maintenir et améliorer)
+
+Écoute sur plusieurs ports
+
+Gestion basique des connexions avec select()
+
+Réponse HTTP 1.1 avec headers Content-Type, Content-Length, Connection
+
+Lecture et envoi de fichiers statiques (html, css, png, etc.)
+
+Page 404 par défaut
+
+Extraction de la route depuis la requête HTTP
+
+Affichage des requêtes reçues (via printf)
+
+    Fermeture propre des sockets
+
+🛠️ À améliorer / à corriger
+
+    Utilisation de select() → remplacer par poll() (ou epoll, kqueue)
+
+        ❌ select() est utilisé, or le sujet impose l'utilisation de poll() ou équivalent pour toutes les opérations I/O.
+
+        ✅ À faire :
+
+            Remplacer select() par poll() dans Server::start()
+
+            Utiliser POLLIN et POLLOUT pour gérer lecture/écriture
+
+            Gérer tous les clients connectés simultanément, non pas les refuser après accept
+
+    Requêtes non-bloquantes
+
+        Le serveur lit immédiatement la requête après accept() (via read()), ce qui est bloquant si aucune donnée n’est disponible.
+
+        ✅ À faire :
+
+            Marquer tous les descripteurs (listen et client) en non-bloquant avec fcntl(fd, F_SETFL, O_NONBLOCK)
+
+            Ne jamais appeler read() ni write() sans poll() préalable
+
+            Lire par morceaux (bufferisation des requêtes incomplètes)
+
+    Gestion des connexions simultanées
+
+        Actuellement, le serveur accepte une connexion, traite, puis ferme immédiatement.
+
+        ✅ À faire :
+
+            Conserver les connexions actives (clients) dans une structure (std::map<int, Connexion>)
+
+            Implémenter une boucle d’analyse et réponse non-bloquante par client
+
+            Respecter la directive "ne jamais bloquer une requête, ni bloquer un thread"
+
+    Structure du code : séparation logique
+
+        ✅ À faire :
+
+            Créer une classe Connection ou ClientHandler pour stocker :
+
+                FD client
+
+                état de lecture / écriture
+
+                buffer de requête
+
+                buffer de réponse
+
+                état de la connexion (en cours, fermée, etc.)
+
+    Support HTTP incomplet
+
+        ❌ Seul GET est géré (et partiellement)
+
+        ✅ À faire :
+
+            Implémenter correctement le parsing complet de la requête HTTP :
+
+                Ligne de commande (méthode, chemin, version)
+
+                Headers (au moins Host, Content-Length, etc.)
+
+                Body pour POST
+
+        ✅ Implémenter les méthodes suivantes :
+
+GET
+
+POST (ex. : upload fichier, ou renvoyer formulaire simulé)
+
+            DELETE
+
+    Configuration serveur
+
+        ❌ Aucun parsing de fichier de configuration .conf
+
+        ✅ À faire :
+
+            Gérer un fichier de conf (ex. : config.conf)
+
+                Ports
+
+                Racine (root)
+
+                Pages d’erreur (error_page)
+
+                Emplacements (location { ... })
+
+                Méthodes autorisées
+
+            Créer une classe Config pour parser et stocker les directives
+
+🚀 À implémenter obligatoirement (non présent pour l’instant)
+🔄 Fonctionnalités HTTP
+
+Mécanisme de keep-alive / connection: close
+
+Headers conformes à HTTP/1.1
+
+Codes d’état HTTP corrects (200, 404, 405, 413, 500, etc.)
+
+    Gestion des erreurs (400, 403, 500, etc.) avec pages personnalisées
+
+📤 Support fichiers statiques
+
+Support du téléchargement de fichiers (Content-Disposition: attachment)
+
+    Support de fichiers binaires de grande taille (streamé)
+
+🧪 Tests & compatibilité navigateur
+
+Tester avec curl, telnet, navigateurs modernes (Chrome, Firefox)
+
+    Comparer comportement avec NGINX sur cas similaires
+
+📄 Gestion du POST
+
+Lecture du body (Content-Length)
+
+Formulaire HTML simulant un upload
+
+    Écriture du body dans un fichier (upload fictif)
+
+🔧 Gestion de CGI (avec fork(), dup2(), etc.)
+
+Support de scripts CGI (ex. PHP, Python)
+
+Lecture de la sortie standard du script
+
+    Mapping /cgi-bin/ ou équivalent dans la config
+
+🧪 Stress & stabilité
+
+Test de plusieurs centaines de connexions simultanées (outil : ab, siege, ou script Python asyncio)
+
+Timeout inactifs (pas de connexion bloquée)
+
+    Détection & fermeture des clients inactifs
+
+🧼 Divers
+
+Ne pas utiliser errno après read()/write() (comme mentionné dans le sujet)
+
+Logger toutes les connexions entrantes et requêtes
+
+    Gérer le SIGINT pour fermeture propre du serveur (Ctrl+C)
+
+💡 Conseils
+
+    Commence par remplacer select() par poll() avec une structure de clients active
+
+    Implémente le GET de manière non-bloquante
+
+    Puis ajoute POST, DELETE
+
+    Ensuite, ajoute le parsing du fichier de configuration
+
+    Termine par le support CGI
